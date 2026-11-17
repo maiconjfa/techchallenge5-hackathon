@@ -92,8 +92,10 @@ env:
   # Conta 248530551510 (output do Terraform: aws_account_id)
   REGISTRY: 248530551510.dkr.ecr.us-east-1.amazonaws.com
 
+# O grupo inclui a ref: PRs e pushes na main NAO cancelam uns aos outros
+# (o Dependabot abre PRs logo apos um push, o que cancelava a pipeline da main).
 concurrency:
-  group: ci-${{ inputs.service-name }}
+  group: ci-${{ inputs.service-name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

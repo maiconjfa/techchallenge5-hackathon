@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -8,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/joho/godotenv"
 )
@@ -26,7 +27,7 @@ type Donation struct {
 
 type App struct {
 	DB          *sql.DB
-	SqsSvc      *sqs.SQS
+	SqsSvc      *sqs.Client
 	SqsQueueURL string
 }
 
@@ -49,13 +50,17 @@ func main() {
 	}
 	log.Println("Conectado ao PostgreSQL (donation-service).")
 
-	var sqsSvc *sqs.SQS
+	var sqsSvc *sqs.Client
 	queueURL := os.Getenv("AWS_SQS_URL")
 	region := os.Getenv("AWS_REGION")
 	if queueURL != "" && region != "" {
-		sess, _ := session.NewSession(&aws.Config{Region: aws.String(region)})
-		sqsSvc = sqs.New(sess)
-		log.Println("Integração com AWS SQS ativada.")
+		cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+		if err != nil {
+			log.Printf("Falha ao carregar a configuracao da AWS (SQS desativado): %v", err)
+		} else {
+			sqsSvc = sqs.NewFromConfig(cfg)
+			log.Println("Integração com AWS SQS ativada.")
+		}
 	}
 
 	app := &App{DB: db, SqsSvc: sqsSvc, SqsQueueURL: queueURL}
@@ -132,8 +137,13 @@ func (a *App) DonationHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) sendNotificationEvent(d Donation) {
-	body, _ := json.Marshal(d)
-	_, err := a.SqsSvc.SendMessage(&sqs.SendMessageInput{
+	body, err := json.Marshal(d)
+	if err != nil {
+		log.Printf("Falha ao serializar o evento: %v", err)
+		return
+	}
+
+	_, err = a.SqsSvc.SendMessage(context.Background(), &sqs.SendMessageInput{
 		MessageBody: aws.String(string(body)),
 		QueueUrl:    aws.String(a.SqsQueueURL),
 	})

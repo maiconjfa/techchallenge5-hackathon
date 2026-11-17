@@ -40,3 +40,8 @@ terraform.rc
 .DS_Store
 .idea/
 .vscode/
+
+# Binarios de build Go
+donation-service/donation-service
+*.test
+*.exe

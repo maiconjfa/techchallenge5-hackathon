@@ -79,3 +79,8 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(terraform)"
+    # O provider AWS 6.x exige migracao de recursos; atualize manualmente
+    # quando houver tempo para revisar o plan.
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types: ["version-update:semver-major"]
