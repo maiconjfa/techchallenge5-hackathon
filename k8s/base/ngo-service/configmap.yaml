@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ngo-service-config
+  labels:
+    app.kubernetes.io/name: ngo-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+data:
+  # Porta lida por app.py / gunicorn (Dockerfile expoe 8081).
+  PORT: "8081"
+  # A DATABASE_URL (com usuario/senha) fica no Secret ngo-service-secrets.

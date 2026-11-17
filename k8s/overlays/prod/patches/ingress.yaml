@@ -1,0 +1,23 @@
+# Producao: HTTPS com redirect 80 -> 443 (JSON patch).
+# Substitua o certificate-arn pelo ARN do certificado no ACM (mesma regiao do ALB).
+- op: replace
+  path: /spec/rules/0/host
+  value: api.solidarytech.example.com
+- op: replace
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1listen-ports
+  value: '[{"HTTP":80},{"HTTPS":443}]'
+- op: add
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1ssl-redirect
+  value: "443"
+- op: add
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1ssl-policy
+  value: ELBSecurityPolicy-TLS13-1-2-2021-06
+- op: add
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+  value: arn:aws:acm:us-east-1:000000000000:certificate/REPLACE_CERTIFICATE_ID
+- op: add
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1load-balancer-name
+  value: solidarytech-prod
+- op: replace
+  path: /metadata/annotations/alb.ingress.kubernetes.io~1tags
+  value: Project=solidarytech,Environment=prod,ManagedBy=kustomize

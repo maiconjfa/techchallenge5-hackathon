@@ -1,0 +1,46 @@
+###############################################################################
+# CI do microsservico volunteer-service
+#
+# Dispara em Pull Request e Push na main (com filtro de caminhos).
+# Estagios completos de DevSecOps definidos no workflow reutilizavel:
+#   .github/workflows/_ci-reusable.yml
+###############################################################################
+name: "volunteer-service CI"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "volunteer-service/**"
+      - ".github/workflows/volunteer-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "volunteer-service/**"
+      - ".github/workflows/volunteer-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  ci:
+    name: "Pipeline volunteer-service"
+    uses: ./.github/workflows/_ci-reusable.yml
+    with:
+      service-name: volunteer-service
+      working-directory: volunteer-service
+      language: python
+      python-version: "3.11"
+      ecr-repository: solidarytech/volunteer-service
+      gitops-file: k8s/overlays/prod/kustomization.yaml
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}

@@ -1,0 +1,7 @@
+# Hot path com 3+ replicas: mantem 2 disponiveis durante drenagens/upgrades.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: donation-service
+spec:
+  minAvailable: 2

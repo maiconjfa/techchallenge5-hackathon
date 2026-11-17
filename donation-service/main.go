@@ -3,11 +3,9 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -73,7 +71,7 @@ func main() {
 func (a *App) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok","service":"donation-service"}`))
+	_, _ = w.Write([]byte(`{"status":"ok","service":"donation-service"}`))
 }
 
 func (a *App) DonationHandler(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +101,7 @@ func (a *App) DonationHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(d)
+		_ = json.NewEncoder(w).Encode(d)
 		return
 	}
 
@@ -113,16 +111,20 @@ func (a *App) DonationHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
 			return
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		donations := []Donation{}
 		for rows.Next() {
 			var d Donation
-			rows.Scan(&d.ID, &d.NgoID, &d.Amount, &d.DonorName, &d.Status, &d.CreatedAt)
+			if err := rows.Scan(&d.ID, &d.NgoID, &d.Amount, &d.DonorName, &d.Status, &d.CreatedAt); err != nil {
+				log.Printf("Erro ao ler doação: %v", err)
+				http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+				return
+			}
 			donations = append(donations, d)
 		}
 
-		json.NewEncoder(w).Encode(donations)
+		_ = json.NewEncoder(w).Encode(donations)
 		return
 	}
 

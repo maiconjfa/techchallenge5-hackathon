@@ -1,0 +1,7 @@
+# Producao: donation-service (hot path) com 3 replicas iniciais.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: donation-service
+spec:
+  replicas: 3

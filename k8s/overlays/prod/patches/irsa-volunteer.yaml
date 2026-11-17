@@ -1,0 +1,8 @@
+# IRSA: IAM Role do volunteer-service (DynamoDB), sem credenciais estaticas.
+# Substitua 000000000000 pelo Account ID e ajuste o nome do role criado no Terraform.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: volunteer-service
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/solidarytech-prod-volunteer-service

@@ -1,0 +1,471 @@
+###############################################################################
+# Pipeline Reutilizavel de CI + DevSecOps - SolidaryTech
+#
+# Chamado pelos workflows de cada microsservico (*-ci.yml).
+#
+# Estagios (jobs encadeados - qualquer falha interrompe o pipeline):
+#   1. build-test            : compila e roda testes unitarios
+#   2. lint                  : golangci-lint (Go) | flake8 + pylint (Python)
+#   3. security-scan         : SCA (Trivy fs) + SAST (gosec | bandit)
+#                              >>> REGRA DE BLOQUEIO: vulnerabilidade CRITICAL/HIGH
+#                                  no SCA (ou HIGH no SAST) falha o pipeline <<<
+#   4. sonar (opcional)      : SonarQube/SonarCloud, executado somente quando
+#                              o secret SONAR_TOKEN estiver configurado
+#   5. docker-build-scan-push: build da imagem -> Trivy image scan (CRITICAL
+#                              bloqueia) -> login ECR via OIDC -> push
+#   6. update-gitops         : atualiza images.newTag/newName no Kustomize
+#                              (k8s/overlays/prod) e faz commit
+#
+# Seguranca de credenciais: sem chaves estaticas. O job assume a role IAM
+# criada em terraform/github-oidc.tf via federacao OIDC
+# (secret do repositorio: AWS_ROLE_ARN).
+#
+# Jobs 5 e 6 so executam em PUSH na main; Pull Requests executam 1-4.
+###############################################################################
+name: CI Reutilizavel (DevSecOps)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: "Nome do microsservico (usado nos commits e caminhos GitOps)"
+        required: true
+        type: string
+      working-directory:
+        description: "Diretorio raiz do servico no repositorio"
+        required: true
+        type: string
+      language:
+        description: "Linguagem do servico: go ou python"
+        required: true
+        type: string
+      ecr-repository:
+        description: "Repositorio ECR de destino (ex.: solidarytech/ngo-service)"
+        required: true
+        type: string
+      go-version-file:
+        description: "Caminho do go.mod (servicos Go)"
+        required: false
+        type: string
+      python-version:
+        description: "Versao Python (servicos Python)"
+        required: false
+        type: string
+        default: "3.11"
+      version-prefix:
+        description: "Prefixo semantico da imagem (gera <prefix>-<sha>)"
+        required: false
+        type: string
+        default: "v1.0.0"
+      gitops-file:
+        description: "Manifesto Kustomize atualizado no CD"
+        required: false
+        type: string
+        default: "k8s/overlays/prod/kustomization.yaml"
+      run-sonar:
+        description: "Habilita o job opcional de SonarQube"
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      AWS_ROLE_ARN:
+        required: false
+        description: "ARN da role IAM assumida via OIDC (terraform/github-oidc.tf)"
+      SONAR_TOKEN:
+        required: false
+        description: "Token do SonarQube/SonarCloud (habilita o job de SAST)"
+      SONAR_HOST_URL:
+        required: false
+        description: "URL do SonarQube (ex.: https://sonarcloud.io)"
+      SONAR_ORGANIZATION:
+        required: false
+        description: "Organization do SonarCloud (opcional)"
+
+permissions:
+  id-token: write # federacao OIDC com a AWS
+  contents: write # commit automatico no GitOps
+  security-events: write # upload de SARIF no code scanning
+  actions: read # leitura de metadados do workflow (code scanning)
+
+env:
+  AWS_REGION: us-east-1
+  # Conta 248530551510 (output do Terraform: aws_account_id)
+  REGISTRY: 248530551510.dkr.ecr.us-east-1.amazonaws.com
+
+concurrency:
+  group: ci-${{ inputs.service-name }}
+  cancel-in-progress: true
+
+jobs:
+  ###########################################################################
+  # 1. Build & Unit Test
+  ###########################################################################
+  build-test:
+    name: "Build & Unit Test (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      #######################################################################
+      # Go: build + testes unitarios
+      #######################################################################
+      - name: Setup Go
+        if: inputs.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.go-version-file }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: Build (Go)
+        if: inputs.language == 'go'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          go build -v ./...
+          go vet ./...
+
+      - name: Unit Tests (Go)
+        if: inputs.language == 'go'
+        working-directory: ${{ inputs.working-directory }}
+        run: go test -v -cover ./...
+
+      #######################################################################
+      # Python: instalacao de dependencias + testes unitarios
+      #######################################################################
+      - name: Setup Python
+        if: inputs.language == 'python'
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: ${{ inputs.working-directory }}/requirements.txt
+
+      - name: Install dependencies (Python)
+        if: inputs.language == 'python'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Unit Tests (Python)
+        if: inputs.language == 'python'
+        working-directory: ${{ inputs.working-directory }}
+        run: pytest
+
+  ###########################################################################
+  # 2. Linter / Static Analysis
+  ###########################################################################
+  lint:
+    name: "Lint (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        if: inputs.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.go-version-file }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: golangci-lint (Go)
+        if: inputs.language == 'go'
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          working-directory: ${{ inputs.working-directory }}
+          args: --timeout=5m
+
+      - name: Setup Python
+        if: inputs.language == 'python'
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies (Python)
+        if: inputs.language == 'python'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt flake8 pylint
+
+      - name: flake8 + pylint (Python)
+        if: inputs.language == 'python'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          # Erros fatais (sintaxe/imports indefinidos/etc.) BLOQUEIAM o pipeline
+          flake8 app.py --count --select=E9,F63,F7,F82 --show-source --statistics
+          # pylint em modo erros-only: convencao/estilo nao bloqueia
+          pylint app.py --disable=all --enable=E --score=no
+
+  ###########################################################################
+  # 3. Security Scan (SAST & SCA)
+  #    REGRA DE BLOQUEIO: CRITICAL/HIGH (SCA) / HIGH (SAST) => FALHA
+  ###########################################################################
+  security-scan:
+    name: "Security Scan - SAST & SCA (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      #######################################################################
+      # SCA - Software Composition Analysis (dependencias)
+      # Relatorio completo para visibilidade (nao bloqueia):
+      #######################################################################
+      - name: Trivy FS - relatorio completo (visibilidade)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.working-directory }}
+          scanners: vuln,secret,misconfig
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: table
+
+      # SARIF para o GitHub code scanning (opcional, nao bloqueia)
+      - name: Trivy FS - SARIF (code scanning)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.working-directory }}
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-fs.sarif
+          ignore-unfixed: true
+
+      - name: Upload SARIF (code scanning)
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs-${{ inputs.service-name }}
+
+      # Bloqueio: vulnerabilidade CRITICA ou HIGH em dependencias ou segredos
+      # expostos no codigo do servico.
+      - name: Trivy FS - GATE CRITICAL/HIGH (bloqueia pipeline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.working-directory }}
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Misconfigurations (Dockerfile/IaC do servico): CRITICAL bloqueia.
+      - name: Trivy FS - misconfig GATE CRITICAL (bloqueia pipeline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.working-directory }}
+          scanners: misconfig
+          severity: CRITICAL
+          exit-code: "1"
+
+      #######################################################################
+      # SAST - Static Application Security Testing (codigo fonte)
+      #######################################################################
+      - name: Setup Go
+        if: inputs.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.go-version-file }}
+
+      # gosec: issues de severidade HIGH bloqueiam (mapeamento:
+      # gosec nao possui nivel CRITICAL; HIGH equivale ao topo da escala)
+      - name: gosec - SAST Go (bloqueia HIGH+)
+        if: inputs.language == 'go'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -o pipefail
+          OUT=$(mktemp)
+          go mod download
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.24.1
+          "$(go env GOPATH)/bin/gosec" -severity high -confidence medium -quiet -out "$OUT" ./... \
+            && echo "gosec: nenhuma vulnerabilidade HIGH encontrada." \
+            || { echo "::error::SAST gosec encontrou vulnerabilidades HIGH:"; cat "$OUT"; exit 1; }
+
+      # bandit: apenas severidade HIGH (-lll) bloqueia o pipeline
+      - name: bandit - SAST Python (bloqueia HIGH)
+        if: inputs.language == 'python'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          pip install bandit
+          bandit -r app.py -lll --skip B101
+
+  ###########################################################################
+  # 4. SonarQube / SonarCloud (opcional)
+  #    Executa somente quando o secret SONAR_TOKEN existe. Sem token, o job
+  #    e marcado como skipped e NAO bloqueia os jobs seguintes.
+  ###########################################################################
+  sonar:
+    name: "SonarQube (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    needs: lint
+    if: inputs.run-sonar
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+    steps:
+      - name: Checkout (historico completo para o Sonar)
+        if: env.SONAR_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Gerar sonar-project.properties
+        if: env.SONAR_TOKEN != ''
+        run: |
+          cat > sonar-project.properties <<EOF
+          sonar.projectKey=solidarytech-${{ inputs.service-name }}
+          sonar.projectName=SolidaryTech ${{ inputs.service-name }}
+          sonar.sources=${{ inputs.working-directory }}
+          sonar.sourceEncoding=UTF-8
+          sonar.exclusions=**/venv/**,**/.venv/**,**/__pycache__/**,**/tests/**,**/*_test.go
+          sonar.qualitygate.wait=true
+          EOF
+          if [ -n "${SONAR_ORGANIZATION}" ]; then
+            echo "sonar.organization=${SONAR_ORGANIZATION}" >> sonar-project.properties
+          fi
+          cat sonar-project.properties
+
+      - name: SonarQube Scan
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
+
+      - name: Sonar sem token (informativo)
+        if: env.SONAR_TOKEN == ''
+        run: echo "::notice::SONAR_TOKEN nao configurado - job de Sonar ignorado."
+
+  ###########################################################################
+  # 5. Docker Build & Scan & Push ao ECR (apenas push na main)
+  ###########################################################################
+  docker-build-scan-push:
+    name: "Docker Build & Container Scan & Push (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    needs: [security-scan, sonar]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.security-scan.result == 'success' &&
+      (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+      pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Define tags da imagem
+        id: vars
+        run: |
+          IMAGE_TAG="${{ inputs.version-prefix }}-${GITHUB_SHA::7}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Imagem: ${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:${IMAGE_TAG}"
+
+      - name: Docker Build
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          docker build \
+            -t "${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:${{ steps.vars.outputs.image_tag }}" \
+            -t "${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:latest" \
+            .
+
+      #####################################################################
+      # Container Scan - vulnerabilidades CRITICAL na IMAGEM bloqueiam
+      #####################################################################
+      - name: Trivy Image - GATE CRITICAL (bloqueia pipeline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:${{ steps.vars.outputs.image_tag }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      #####################################################################
+      # Autenticacao OIDC na AWS e push ao ECR
+      # (se AWS_ROLE_ARN nao estiver configurado, o push e ignorado)
+      #####################################################################
+      - name: Configure AWS credentials (OIDC)
+        if: env.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ inputs.service-name }}
+
+      - name: Login no Amazon ECR
+        if: env.AWS_ROLE_ARN != ''
+        uses: aws-actions/amazon-ecr-login@v2.2.0
+
+      - name: Push da imagem para o ECR
+        id: push
+        if: env.AWS_ROLE_ARN != ''
+        run: |
+          docker push "${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:${{ steps.vars.outputs.image_tag }}"
+          docker push "${{ env.REGISTRY }}/${{ inputs.ecr-repository }}:latest"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push ignorado (sem AWS_ROLE_ARN)
+        if: env.AWS_ROLE_ARN == ''
+        run: echo "::warning::AWS_ROLE_ARN nao configurado - imagem construida e escaneada, mas NAO enviada ao ECR."
+
+  ###########################################################################
+  # 6. Atualizacao Automatica do Repositorio GitOps (CD)
+  ###########################################################################
+  update-gitops:
+    name: "Update GitOps - nova tag (${{ inputs.service-name }})"
+    runs-on: ubuntu-latest
+    needs: docker-build-scan-push
+    if: needs.docker-build-scan-push.outputs.pushed == 'true'
+
+    # Serializa atualizacoes no GitOps entre os 3 pipelines simultaneos
+    concurrency:
+      group: gitops-update
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Instalar yq
+        run: |
+          sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_amd64 \
+            -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Atualizar images.newTag/newName no Kustomize
+        run: |
+          FILE="${{ inputs.gitops-file }}"
+          export IMAGE="${{ inputs.service-name }}"
+          export NEW_TAG="${{ needs.docker-build-scan-push.outputs.image_tag }}"
+          export NEW_NAME="${{ env.REGISTRY }}/${{ inputs.ecr-repository }}"
+          echo "Atualizando ${FILE}: ${IMAGE} -> ${NEW_NAME}:${NEW_TAG}"
+          yq -i '(.images[] | select(.name == strenv(IMAGE)) | .newTag) = strenv(NEW_TAG)' "$FILE"
+          yq -i '(.images[] | select(.name == strenv(IMAGE)) | .newName) = strenv(NEW_NAME)' "$FILE"
+          yq '(.images[] | select(.name == strenv(IMAGE)))' "$FILE"
+
+      - name: Commit e Push no repositorio GitOps
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          FILE="${{ inputs.gitops-file }}"
+          NEW_TAG="${{ needs.docker-build-scan-push.outputs.image_tag }}"
+          git add "$FILE"
+          git diff --cached --quiet && { echo "Sem mudancas."; exit 0; }
+          git commit -m "ci(${{ inputs.service-name }}): bump image to ${NEW_TAG}"
+          git pull --rebase origin main
+          git push

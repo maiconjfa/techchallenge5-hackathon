@@ -1,0 +1,39 @@
+# Exemplo: copie para terraform.tfvars e ajuste se necessário.
+# Os defaults já refletem a especificação do projeto.
+
+aws_region  = "us-east-1"
+aws_profile = "tf"
+
+# Nome base dos recursos (minúsculo, sem espaços).
+name_prefix = "solidarytech-prod"
+
+# Tags obrigatórias (defaults já corretos; a validação impede valores indevidos).
+# project     = "SolidaryTech"
+# environment = "Production"
+# cost_center = "NGO-Core"
+
+# --- EKS ---
+# cluster_version     = "1.34"
+# node_instance_types = ["t3.medium"]
+# node_desired_size   = 2
+# node_min_size       = 2
+# node_max_size       = 4
+# node_disk_size      = 30
+
+# Restrinja o endpoint público do EKS ao IP da equipe/CI antes de aplicar.
+# eks_public_access_cidrs = ["203.0.113.10/32"]
+
+# --- RDS ---
+# db_instance_class          = "db.t3.micro"
+# db_allocated_storage       = 20
+# db_max_allocated_storage   = 100
+# db_backup_retention_period = 7
+# db_multi_az                = false
+
+# --- Kubernetes (trust policy IRSA) ---
+# k8s_namespace = "solidarytech-prod"
+
+# Tags extras permitidas (não podem sobrescrever as obrigatórias).
+# extra_tags = {
+#   Owner = "solidarytech-team"
+# }

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.out
+
+# SonarQube
+.scannerwork/
+sonar-project.properties
+
+# Variaveis de ambiente locais (nunca commitar credenciais)
+.env
+.env.*
+!.env.example
+
+# Segredos locais do Kubernetes
+k8s/overlays/*/secrets/*.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Editores / SO
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,81 @@
+###############################################################################
+# Dependabot - atualizacoes de dependencias e actions (DevSecOps / supply chain)
+#
+# PRs gerados aqui passam pelo pipeline de CI (testes + Trivy + SAST) antes
+# de serem mesclados, mantendo as imagens e o codigo sem CVEs conhecidas.
+###############################################################################
+version: 2
+
+updates:
+  # GitHub Actions usadas nos workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Dependencias Python (ngo-service)
+  - package-ecosystem: "pip"
+    directory: "/ngo-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps-ngo)"
+
+  # Dependencias Python (volunteer-service)
+  - package-ecosystem: "pip"
+    directory: "/volunteer-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps-volunteer)"
+
+  # Modulos Go (donation-service)
+  - package-ecosystem: "gomod"
+    directory: "/donation-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps-donation)"
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Imagens base dos Dockerfiles
+  - package-ecosystem: "docker"
+    directory: "/ngo-service"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(docker-ngo)"
+
+  - package-ecosystem: "docker"
+    directory: "/donation-service"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(docker-donation)"
+
+  - package-ecosystem: "docker"
+    directory: "/volunteer-service"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(docker-volunteer)"
+
+  # Providers do Terraform
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(terraform)"

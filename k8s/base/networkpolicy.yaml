@@ -1,0 +1,89 @@
+# NetworkPolicies de defesa em profundidade.
+#
+# IMPORTANTE:
+# - Só têm efeito em clusters com Network Policy habilitada (no EKS, via
+#   AWS VPC CNI com enableNetworkPolicy=true).
+# - O CIDR abaixo deve ser ajustado para o CIDR da VPC do cluster. Ele cobre
+#   as ENIs do ALB e os nós (probes do kubelet), que ficam fora do range de pods.
+# - O egress permanece liberado para DNS, RDS, SQS e DynamoDB.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ngo-service-allow-ingress
+  labels:
+    app.kubernetes.io/name: ngo-service
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ngo-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: donation-service-allow-ingress
+  labels:
+    app.kubernetes.io/name: donation-service
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: donation-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8082
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: volunteer-service-allow-ingress
+  labels:
+    app.kubernetes.io/name: volunteer-service
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: volunteer-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8083

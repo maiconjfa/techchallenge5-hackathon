@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donation-service-config
+  labels:
+    app.kubernetes.io/name: donation-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+data:
+  PORT: "8082"
+  AWS_REGION: us-east-1
+  # Substitua pelo endpoint real da fila SQS criada pelo Terraform/provisionamento.
+  AWS_SQS_URL: https://sqs.us-east-1.amazonaws.com/000000000000/solidarytech-donations
+  # A DATABASE_URL (com usuario/senha) fica no Secret donation-service-secrets.

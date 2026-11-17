@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Overlay de desenvolvimento (menor custo, 1 replica por servico).
+# Antes de aplicar, crie os arquivos de segredo:
+#
+#   cp k8s/overlays/dev/secrets/ngo-service.env.example \
+#      k8s/overlays/dev/secrets/ngo-service.env
+#   cp k8s/overlays/dev/secrets/donation-service.env.example \
+#      k8s/overlays/dev/secrets/donation-service.env
+#
+# Depois ajuste os valores e rode:
+#   kubectl apply -k k8s/overlays/dev
+
+namespace: solidarytech-dev
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Troque 000000000000 pelo Account ID da AWS e ajuste regiao/repositorio.
+images:
+  - name: ngo-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/ngo-service
+    newTag: dev
+  - name: donation-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/donation-service
+    newTag: dev
+  - name: volunteer-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/volunteer-service
+    newTag: dev
+
+# Segredos ficam fora do Git (ver .gitignore). O Secret gerado tem o nome
+# referenciado nos Deployments, sem sufixo de hash.
+secretGenerator:
+  - name: ngo-service-secrets
+    envs:
+      - secrets/ngo-service.env
+    options:
+      disableNameSuffixHash: true
+  - name: donation-service-secrets
+    envs:
+      - secrets/donation-service.env
+    options:
+      disableNameSuffixHash: true
+
+patches:
+  - path: patches/replicas-ngo.yaml
+  - path: patches/replicas-donation.yaml
+  - path: patches/replicas-volunteer.yaml
+  - path: patches/hpa-ngo.yaml
+  - path: patches/hpa-donation.yaml
+  - path: patches/hpa-volunteer.yaml
+  # Em dev ha 1 replica por servico: minAvailable: 1 impediria drenar o node.
+  # Permitimos 1 pod indisponivel durante manutencoes voluntarias.
+  - target:
+      kind: PodDisruptionBudget
+      name: ngo-service
+    patch: |-
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1
+  - target:
+      kind: PodDisruptionBudget
+      name: donation-service
+    patch: |-
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1
+  - target:
+      kind: PodDisruptionBudget
+      name: volunteer-service
+    patch: |-
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1
+  - path: patches/irsa-donation.yaml
+  - path: patches/irsa-volunteer.yaml
+  - path: patches/ingress.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: solidarytech

@@ -1,0 +1,204 @@
+###############################################################################
+# CI de Infraestrutura (Terraform + Kubernetes) - DevSecOps
+#
+# Executa em PR/Push na main quando Terraform ou manifestos mudam:
+#   1. terraform: fmt -check, init (backend=false), validate, tflint, Trivy config
+#   2. kubernetes: kustomize build (dev/prod), kubeconform e Trivy config
+#
+# Nao executa terraform plan/apply: o provisionamento continua manual
+# (ver terraform/README.md). Nenhuma credencial AWS e necessaria aqui.
+###############################################################################
+name: "Infra CI (Terraform & Kubernetes)"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "k8s/**"
+      - ".tflint.hcl"
+      - ".trivyignore"
+      - ".github/workflows/infra-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "k8s/**"
+      - ".tflint.hcl"
+      - ".trivyignore"
+      - ".github/workflows/infra-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: infra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ###########################################################################
+  # 1. Terraform - formato, validacao estatica e misconfigurations
+  ###########################################################################
+  terraform:
+    name: "Terraform (fmt + validate + tflint + Trivy)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.11.3
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (sem backend remoto)
+        run: terraform init -backend=false -input=false -lock-timeout=60s
+
+      - name: terraform validate
+        run: terraform validate -no-color
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.66.0
+
+      - name: TFLint
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tflint --version
+          tflint --init
+          tflint --format compact --force
+
+      - name: Trivy config - relatorio completo (visibilidade)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: table
+
+      - name: Trivy config - SARIF (code scanning)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-terraform.sarif
+
+      - name: Upload SARIF Terraform (code scanning)
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: trivy-terraform.sarif
+          category: trivy-terraform
+
+      - name: Trivy config - GATE CRITICAL (bloqueia pipeline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+  ###########################################################################
+  # 2. Kubernetes - build dos overlays e validacao de schemas
+  ###########################################################################
+  kubernetes:
+    name: "Kustomize + kubeconform + Trivy"
+    runs-on: ubuntu-latest
+    env:
+      KUSTOMIZE_VERSION: v5.8.3
+      KUBECONFORM_VERSION: v0.8.0
+      KUBERNETES_VERSION: "1.34.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Instalar kustomize e kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp kustomize
+          sudo install -m 0755 /tmp/kustomize /usr/local/bin/kustomize
+
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /tmp kubeconform
+          sudo install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform
+
+          kustomize version
+          kubeconform -v
+
+      - name: Gerar secrets locais a partir dos exemplos
+        run: |
+          set -euo pipefail
+          for env in dev prod; do
+            for service in ngo-service donation-service; do
+              src="k8s/overlays/${env}/secrets/${service}.env.example"
+              dst="k8s/overlays/${env}/secrets/${service}.env"
+              cp "$src" "$dst"
+            done
+          done
+
+      - name: Build dos overlays (dev e prod)
+        run: |
+          set -euo pipefail
+          kustomize build k8s/overlays/dev > /tmp/k8s-dev.yaml
+          kustomize build k8s/overlays/prod > /tmp/k8s-prod.yaml
+          echo "dev:  $(grep -c '^kind:' /tmp/k8s-dev.yaml) recursos"
+          echo "prod: $(grep -c '^kind:' /tmp/k8s-prod.yaml) recursos"
+
+      - name: kubeconform (schemas Kubernetes)
+        run: |
+          kubeconform -strict -summary -ignore-missing-schemas \
+            -kubernetes-version "${KUBERNETES_VERSION}" \
+            /tmp/k8s-dev.yaml /tmp/k8s-prod.yaml
+
+      - name: Trivy config - relatorio completo (visibilidade)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: config
+          scan-ref: k8s
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: table
+
+      - name: Trivy config - SARIF (code scanning)
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: config
+          scan-ref: k8s
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-k8s.sarif
+
+      - name: Upload SARIF Kubernetes (code scanning)
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: trivy-k8s.sarif
+          category: trivy-k8s
+
+      - name: Trivy config - GATE CRITICAL (bloqueia pipeline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: k8s
+          severity: CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore

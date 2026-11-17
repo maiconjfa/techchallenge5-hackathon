@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Overlay de producao (HA minima, HTTPS no ALB e mais capacidade).
+# Antes de aplicar, crie os arquivos de segredo:
+#
+#   cp k8s/overlays/prod/secrets/ngo-service.env.example \
+#      k8s/overlays/prod/secrets/ngo-service.env
+#   cp k8s/overlays/prod/secrets/donation-service.env.example \
+#      k8s/overlays/prod/secrets/donation-service.env
+#
+# Depois ajuste os valores e rode:
+#   kubectl apply -k k8s/overlays/prod
+
+namespace: solidarytech-prod
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Troque 000000000000 pelo Account ID da AWS e use tags imutaveis em producao
+# (ex.: v1.0.0 ou o SHA do commit), nunca "latest".
+images:
+  - name: ngo-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/ngo-service
+    newTag: v1.0.0
+  - name: donation-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/donation-service
+    newTag: v1.0.0
+  - name: volunteer-service
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/solidarytech/volunteer-service
+    newTag: v1.0.0
+
+secretGenerator:
+  - name: ngo-service-secrets
+    envs:
+      - secrets/ngo-service.env
+    options:
+      disableNameSuffixHash: true
+  - name: donation-service-secrets
+    envs:
+      - secrets/donation-service.env
+    options:
+      disableNameSuffixHash: true
+
+patches:
+  - path: patches/replicas-donation.yaml
+  - path: patches/hpa-ngo.yaml
+  - path: patches/hpa-donation.yaml
+  - path: patches/hpa-volunteer.yaml
+  - path: patches/pdb-donation.yaml
+  - path: patches/resources-donation.yaml
+  - path: patches/irsa-donation.yaml
+  - path: patches/irsa-volunteer.yaml
+  - path: patches/ingress.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: solidarytech

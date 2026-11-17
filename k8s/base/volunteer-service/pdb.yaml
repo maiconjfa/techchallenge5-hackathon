@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: volunteer-service
+  labels:
+    app.kubernetes.io/name: volunteer-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: solidarytech
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: volunteer-service

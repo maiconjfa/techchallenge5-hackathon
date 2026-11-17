@@ -41,7 +41,7 @@ Responsável pelo gerenciamento e cadastro das ONGs parceiras da plataforma.
 
 | Item | Valor |
 |---|---|
-| Linguagem | Go 1.21+ |
+| Linguagem | Go 1.25+ |
 | Banco de Dados | PostgreSQL |
 | Mensageria | AWS SQS |
 | Porta Local | `8082` |
@@ -75,7 +75,10 @@ Utiliza armazenamento NoSQL nativo da AWS com foco em escalabilidade.
 .
 ├── ngo-service/          # Código Python e scripts SQL do serviço de ONGs
 ├── donation-service/     # Código Go e scripts SQL do serviço de doações
-└── volunteer-service/    # Código Python do serviço de voluntários
+├── volunteer-service/    # Código Python do serviço de voluntários
+├── k8s/                  # Manifestos Kubernetes (Kustomize base + overlays dev/prod)
+├── terraform/            # IaC: VPC, EKS, RDS, SQS, DynamoDB, ECR e IAM (OIDC/IRSA)
+└── .github/workflows/    # CI/CD e DevSecOps (GitHub Actions)
 ```
 
 ---
@@ -90,8 +93,8 @@ Antes de realizar deploy em Kubernetes e automatizações CI/CD, recomenda-se va
 
 Certifique-se de possuir os seguintes itens instalados:
 
-- Python 3.9+
-- Go 1.21+
+- Python 3.11+
+- Go 1.25+
 - Docker (opcional, mas recomendado)
 - PostgreSQL
 - AWS CLI configurado
@@ -280,18 +283,40 @@ Implementar:
 
 # 🔄 CI/CD & GitOps
 
-Automatizar:
+Pipelines implementados com **GitHub Actions** em `.github/workflows/`
+(detalhes e configuração de secrets em [`.github/workflows/README.md`](.github/workflows/README.md)):
 
-- Testes
-- Security Scans
-- Build de imagens
-- Deploy em Kubernetes
+| Workflow | Escopo |
+|---|---|
+| `_ci-reusable.yml` | Pipeline DevSecOps reutilizável: testes, lint, SAST/SCA, Sonar opcional, build/scan/push da imagem e atualização do Kustomize |
+| `ngo-ci.yml` | `ngo-service` (Python/Flask) |
+| `donation-ci.yml` | `donation-service` (Go) |
+| `volunteer-ci.yml` | `volunteer-service` (Python/Flask) |
+| `infra-ci.yml` | Terraform (`fmt`, `validate`, `tflint`, Trivy) e Kubernetes (`kustomize build`, `kubeconform`, Trivy) |
 
-Ferramentas sugeridas:
+O que é automatizado:
 
-- GitHub Actions
-- ArgoCD
-- FluxCD
+- **Testes** unitários (`pytest` e `go test`) em todo Pull Request e push na `main`
+- **Lint** (`golangci-lint`, `flake8` e `pylint`)
+- **SAST/SCA** com **Trivy**, **gosec** e **bandit** (regras de bloqueio para CRITICAL/HIGH)
+- **SonarQube/SonarCloud** opcional via secret `SONAR_TOKEN`
+- **Build multi-stage** das 3 imagens Docker, scan da imagem e push no **Amazon ECR** via **OIDC**
+- **CD GitOps**: atualização automática de `images.newName/newTag` em `k8s/overlays/prod` e commit
+
+> Nenhuma credencial estática é usada: a role AWS é assumida via OIDC
+> (`terraform/github-oidc.tf` → output `github_actions_role_arn` → secret `AWS_ROLE_ARN`).
+> O deploy no cluster é feito por ArgoCD/FluxCD (próxima etapa); o pipeline atualiza os manifestos.
+
+### Executando os testes localmente
+
+```bash
+# Python (ngo-service e volunteer-service)
+cd ngo-service && python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt pytest && pytest
+
+# Go (donation-service)
+cd donation-service && go test -v -cover ./...
+```
 
 ---
 

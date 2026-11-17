@@ -1,0 +1,7 @@
+# Dev: 1 replica para reduzir custo. O HPA pode subir conforme a carga.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ngo-service
+spec:
+  replicas: 1

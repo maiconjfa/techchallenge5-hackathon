@@ -1,0 +1,46 @@
+###############################################################################
+# CI do microsservico ngo-service
+#
+# Dispara em Pull Request e Push na main (com filtro de caminhos).
+# Estagios completos de DevSecOps definidos no workflow reutilizavel:
+#   .github/workflows/_ci-reusable.yml
+###############################################################################
+name: "ngo-service CI"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ngo-service/**"
+      - ".github/workflows/ngo-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ngo-service/**"
+      - ".github/workflows/ngo-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  ci:
+    name: "Pipeline ngo-service"
+    uses: ./.github/workflows/_ci-reusable.yml
+    with:
+      service-name: ngo-service
+      working-directory: ngo-service
+      language: python
+      python-version: "3.11"
+      ecr-repository: solidarytech/ngo-service
+      gitops-file: k8s/overlays/prod/kustomization.yaml
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}

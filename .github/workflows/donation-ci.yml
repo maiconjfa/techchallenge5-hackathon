@@ -1,0 +1,46 @@
+###############################################################################
+# CI do microsservico donation-service
+#
+# Dispara em Pull Request e Push na main (com filtro de caminhos).
+# Estagios completos de DevSecOps definidos no workflow reutilizavel:
+#   .github/workflows/_ci-reusable.yml
+###############################################################################
+name: "donation-service CI"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "donation-service/**"
+      - ".github/workflows/donation-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "donation-service/**"
+      - ".github/workflows/donation-ci.yml"
+      - ".github/workflows/_ci-reusable.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  ci:
+    name: "Pipeline donation-service"
+    uses: ./.github/workflows/_ci-reusable.yml
+    with:
+      service-name: donation-service
+      working-directory: donation-service
+      language: go
+      go-version-file: donation-service/go.mod
+      ecr-repository: solidarytech/donation-service
+      gitops-file: k8s/overlays/prod/kustomization.yaml
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
